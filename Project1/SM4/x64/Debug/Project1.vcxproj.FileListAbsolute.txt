@@ -1,1 +1,2 @@
 E:\github\IAE_practice\Project1\x64\Debug\Project1.exe
+E:\github\IAE_practice\Project1\SM4\x64\Debug\Project1.exe

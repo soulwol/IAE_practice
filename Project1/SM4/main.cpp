@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 #include <algorithm>
+#include <chrono>
 
 // 定义循环左移函数
 inline uint32_t rol(uint32_t x, int n) {
@@ -188,13 +189,19 @@ int main() {
     // 密钥扩展
     std::vector<uint32_t> rk = expand_key(key);
 
-    // 加密
+    // 加密时间测量
     uint32_t ciphertext[4];
+    auto start_enc = std::chrono::high_resolution_clock::now();
     sm4_encrypt(plaintext, ciphertext, rk);
+    auto end_enc = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::micro> enc_time = end_enc - start_enc;
 
-    // 解密
+    // 解密时间测量
     uint32_t decrypted[4];
+    auto start_dec = std::chrono::high_resolution_clock::now();
     sm4_decrypt(ciphertext, decrypted, rk);
+    auto end_dec = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double, std::micro> dec_time = end_dec - start_dec;
 
     // 输出结果
     std::cout << "明文: ";
@@ -241,8 +248,14 @@ int main() {
             break;
         }
     }
-
     std::cout << "解密验证: " << (success ? "成功" : "失败") << std::endl;
+
+    // 输出时间信息（精确到微秒）
+    std::cout << "\n耗时统计:" << std::endl;
+    std::cout << "加密时间: " << std::fixed << std::setprecision(4)
+        << enc_time.count() << " 微秒" << std::endl;
+    std::cout << "解密时间: " << std::fixed << std::setprecision(4)
+        << dec_time.count() << " 微秒" << std::endl;
 
     return 0;
 }
