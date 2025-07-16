@@ -1,19 +1,47 @@
-// poseidon2.circom
-pragma circom 2.0.0;
+pragma circom 2.1.4;
 
+include "node_modules/circomlib/circuits/bitify.circom";
 include "node_modules/circomlib/circuits/poseidon.circom";
 
-template Poseidon2OneBlock() {
-    signal input private_in;   // 隐私输入: 哈希原象 (1 个域元素)
-    signal output public_hash; // 公开输出: 哈希结果 (1 个域元素)
+template Poseidon2Hash() {
+    signal input preimage;
+    signal output hash;
 
-    // 实例化 Poseidon 哈希组件 (t=2)
-    component hasher = Poseidon(1); // 输入个数 = t - 1 = 1
-    hasher.inputs[0] <== private_in;
+    // 将整数转换为256位二进制
+    component n2b = Num2Bits(256);
+    n2b.in <== preimage;
+
+    // 分割为两个128位块
+    component b2n1 = Bits2Num(128);
+    component b2n2 = Bits2Num(128);
     
-    // 设置公开输出
-    public_hash <== hasher.out;
+    // 低128位
+    for (var i = 0; i < 128; i++) {
+        b2n1.in[i] <== n2b.out[i];
+    }
+    
+    // 高128位
+    for (var i = 0; i < 128; i++) {
+        b2n2.in[i] <== n2b.out[128 + i];
+    }
+
+    // 调用Poseidon哈希
+    component hasher = Poseidon(2);
+    hasher.inputs[0] <== b2n1.out;
+    hasher.inputs[1] <== b2n2.out;
+    
+    hash <== hasher.out;
 }
 
-// 主组件声明公开信号
-component main { public [public_hash] } = Poseidon2OneBlock();
+template Main() {
+    // 隐私输入：原像
+    signal input preimage;
+    // 输出哈希值
+    signal output hash;
+
+    component poseidon = Poseidon2Hash();
+    poseidon.preimage <== preimage;
+    hash <== poseidon.hash;
+}
+
+component main = Main();
