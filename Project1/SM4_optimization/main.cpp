@@ -16,6 +16,46 @@ inline __m128i _mm_rool_epi32(__m128i x, int n) {
     return _mm_or_si128(_mm_slli_epi32(x, n), _mm_srli_epi32(x, 32 - n));
 }
 
+#ifdef __GFNI__
+// GFNI优化的S盒实现
+inline __m128i sm4_sbox_gfni(__m128i x) {
+    const __m128i A = _mm_set_epi64x(0x0db4d882d7b99aaf, 0x1e1e9066e7c3b0a9);
+    const __m128i B = _mm_set_epi64x(0x71e4b40ad2f10dc5, 0x9fd6c8b35a7e2a1f);
+    return _mm_gf2p8affine_epi64_epi8(x, A, 0xCA);
+}
+
+// AVX2/GFNI混合优化的轮函数
+inline __m128i sm4_round_avx2_gfni(__m128i data, __m128i rk) {
+    __m128i t = _mm_xor_si128(data, rk);
+    t = sm4_sbox_gfni(t);
+    t = _mm_xor_si128(t, _mm_rool_epi32(t, 2));
+    t = _mm_xor_si128(t, _mm_rool_epi32(t, 10));
+    t = _mm_xor_si128(t, _mm_rool_epi32(t, 18));
+    return _mm_xor_si128(t, _mm_rool_epi32(t, 24));
+}
+
+// 全分组AVX2/GFNI加密函数
+void sm4_encrypt_4blocks_avx2_gfni(const uint32_t in[16], uint32_t out[16], const std::vector<uint32_t>& rk) {
+    __m128i b0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(in));
+    __m128i b1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(in + 4));
+    __m128i b2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(in + 8));
+    __m128i b3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(in + 12));
+
+    for (int i = 0; i < 32; ++i) {
+        __m128i rk_vec = _mm_set1_epi32(rk[i]);
+        b0 = sm4_round_avx2_gfni(b0, rk_vec);
+        b1 = sm4_round_avx2_gfni(b1, rk_vec);
+        b2 = sm4_round_avx2_gfni(b2, rk_vec);
+        b3 = sm4_round_avx2_gfni(b3, rk_vec);
+    }
+
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(out), b0);
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(out + 4), b1);
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(out + 8), b2);
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(out + 12), b3);
+}
+#endif
+
 // S盒定义（固定值）
 static const uint8_t SBOX[256] = {
     0xd6, 0x90, 0xe9, 0xfe, 0xcc, 0xe1, 0x3d, 0xb7, 0x16, 0xb6, 0x14, 0xc2, 0x28, 0xfb, 0x2c, 0x05,
@@ -309,6 +349,21 @@ void performance_test() {
     }
     auto end_opt = std::chrono::high_resolution_clock::now();
 
+    // GFNI优化性能测试
+#ifdef __GFNI__
+    uint32_t plaintext_4blocks[16];
+    uint32_t ciphertext_4blocks[16];
+    for (int i = 0; i < 4; ++i) {
+        memcpy(plaintext_4blocks + 4 * i, plaintext, 16);
+    }
+
+    auto start_gfni = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < iterations / 4; ++i) {
+        sm4_encrypt_4blocks_avx2_gfni(plaintext_4blocks, ciphertext_4blocks, rk_optimized);
+    }
+    auto end_gfni = std::chrono::high_resolution_clock::now();
+#endif
+
     // 输出结果
     auto orig_time = std::chrono::duration_cast<std::chrono::microseconds>(end_orig - start_orig);
     auto opt_time = std::chrono::duration_cast<std::chrono::microseconds>(end_opt - start_opt);
@@ -316,6 +371,12 @@ void performance_test() {
     std::cout << "原始算法平均时间: " << orig_time.count() / (double)iterations << " μs/次\n";
     std::cout << "优化算法平均时间: " << opt_time.count() / (double)iterations << " μs/次\n";
     std::cout << "性能提升: " << (1 - (double)opt_time.count() / orig_time.count()) * 100 << "%\n";
+
+#ifdef __GFNI__
+    auto gfni_time = std::chrono::duration_cast<std::chrono::microseconds>(end_gfni - start_gfni);
+    std::cout << "GFNI算法平均时间: " << gfni_time.count() / (double)iterations << " μs/次\n";
+    std::cout << "GFNI性能提升: " << (1 - (double)gfni_time.count() / orig_time.count()) * 100 << "%\n";
+#endif
 }
 
 int main() {
