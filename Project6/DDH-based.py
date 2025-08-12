@@ -29,7 +29,7 @@ class DDHPrivateIntersectionSum:
     # --------------------------
     # 椭圆曲线点操作实现
     # --------------------------
-    # 点加倍算法修正
+    # 点加倍算法
     def _point_double(self, x, y):
         if y == 0:  # 处理无穷远点
             return (0, 0)
@@ -45,7 +45,7 @@ class DDHPrivateIntersectionSum:
         y3 = (lam * (x - x3) - y) % self.p
         return x3, y3
 
-    # 点加法算法修正
+    # 点加法算法
     def _point_add(self, x1, y1, x2, y2):
         # 处理无穷远点情况
         if x1 == 0 and y1 == 0:
@@ -123,7 +123,6 @@ class DDHPrivateIntersectionSum:
             result_x, result_y = self._scalar_multiply(x, y, k1)
 
             # 序列化点 (x坐标)
-            # 实际应用中应使用完整点序列化，此处简化
             point_bytes = result_x.to_bytes(32, 'big')
             hashed_exponents.append(point_bytes)
 
