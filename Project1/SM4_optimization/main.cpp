@@ -4,6 +4,7 @@
 #include <vector>
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <immintrin.h>
 
 // 定义循环左移函数
@@ -163,37 +164,11 @@ inline uint32_t T_prime_combined(uint32_t x) {
         T_prime3[x & 0xFF];
 }
 
-// AESNI优化的轮函数
-inline __m128i aesni_round_function(__m128i data, __m128i rk) {
-    __m128i t = _mm_xor_si128(data, rk);
-    t = _mm_aesenc_si128(t, _mm_setzero_si128());
-    return _mm_xor_si128(
-        t,
-        _mm_xor_si128(
-            _mm_rool_epi32(t, 2),
-            _mm_xor_si128(
-                _mm_rool_epi32(t, 10),
-                _mm_xor_si128(
-                    _mm_rool_epi32(t, 18),
-                    _mm_rool_epi32(t, 24)
-                )
-            )
-        )
-    );
-}
-
 // 轮函数F（原始版本）
 inline uint32_t F_base(uint32_t x0, uint32_t x1, uint32_t x2, uint32_t x3, uint32_t rk) {
     return x0 ^ T(x1 ^ x2 ^ x3 ^ rk);
 }
 
-// 轮函数F（AESNI优化版）
-inline uint32_t F_optimized(uint32_t x0, uint32_t x1, uint32_t x2, uint32_t x3, uint32_t rk) {
-    __m128i data = _mm_set_epi32(x3, x2, x1, x0);
-    __m128i key = _mm_set1_epi32(rk);
-    __m128i result = aesni_round_function(data, key);
-    return _mm_extract_epi32(result, 0);
-}
 
 // 反序变换
 void reverse_words(uint32_t& x0, uint32_t& x1, uint32_t& x2, uint32_t& x3) {
@@ -256,24 +231,6 @@ void sm4_encrypt(const uint32_t in[4], uint32_t out[4], const std::vector<uint32
     }
 }
 
-// 加密函数（优化版）
-void sm4_encrypt_optimized(const uint32_t in[4], uint32_t out[4], const std::vector<uint32_t>& rk) {
-    uint32_t x[4] = { in[0], in[1], in[2], in[3] };
-
-    for (int i = 0; i < 32; ++i) {
-        uint32_t tmp = F_optimized(x[0], x[1], x[2], x[3], rk[i]);
-        x[0] = x[1];
-        x[1] = x[2];
-        x[2] = x[3];
-        x[3] = tmp;
-    }
-
-    reverse_words(x[0], x[1], x[2], x[3]);
-
-    for (int i = 0; i < 4; ++i) {
-        out[i] = x[i];
-    }
-}
 
 // 解密函数（原始版本）
 void sm4_decrypt(const uint32_t in[4], uint32_t out[4], const std::vector<uint32_t>& rk) {
@@ -293,7 +250,68 @@ void sm4_decrypt(const uint32_t in[4], uint32_t out[4], const std::vector<uint32
         out[i] = x[i];
     }
 }
+void sm4_encrypt_t_table(const uint32_t in[4], uint32_t out[4], const std::vector<uint32_t>& rk) {
+    uint32_t x[4] = { in[0], in[1], in[2], in[3] };
 
+    for (int i = 0; i < 32; ++i) {
+        uint32_t tmp = x[0] ^ T_combined(x[1] ^ x[2] ^ x[3] ^ rk[i]);
+        x[0] = x[1];
+        x[1] = x[2];
+        x[2] = x[3];
+        x[3] = tmp;
+    }
+    reverse_words(x[0], x[1], x[2], x[3]);
+    for (int i = 0; i < 4; ++i) {
+        out[i] = x[i];
+    }
+}
+// AES-NI优化的SM4 S盒实现
+inline __m128i sm4_sbox_aesni(__m128i x) {
+    // SM4 S盒 = L2(AES_SBOX(L1(x)))
+    // 仿射变换L1: y = L1(x) = 0xC5 * x + 0x63
+    const __m128i L1_matrix = _mm_set1_epi8(0xC5);
+    const __m128i L1_constant = _mm_set1_epi8(0x63);
+    __m128i y = _mm_xor_si128(_mm_aesenclast_si128(x, L1_matrix), L1_constant);
+    
+    // AES SBOX
+    y = _mm_aesenclast_si128(y, _mm_setzero_si128());
+    
+    // 仿射变换L2: z = L2(y) = 0x3E * y + 0x8E
+    const __m128i L2_matrix = _mm_set1_epi8(0x3E);
+    const __m128i L2_constant = _mm_set1_epi8(0x8E);
+    return _mm_xor_si128(_mm_aesenclast_si128(y, L2_matrix), L2_constant);
+}
+
+// AES-NI优化的轮函数
+inline __m128i sm4_round_aesni(__m128i data, __m128i rk) {
+    __m128i t = _mm_xor_si128(data, rk);
+    t = sm4_sbox_aesni(t);
+    t = _mm_xor_si128(t, _mm_rool_epi32(t, 2));
+    t = _mm_xor_si128(t, _mm_rool_epi32(t, 10));
+    t = _mm_xor_si128(t, _mm_rool_epi32(t, 18));
+    return _mm_xor_si128(t, _mm_rool_epi32(t, 24));
+}
+
+// 全分组AES-NI加密函数
+void sm4_encrypt_4blocks_aesni(const uint32_t in[16], uint32_t out[16], const std::vector<uint32_t>& rk) {
+    __m128i b0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(in));
+    __m128i b1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(in + 4));
+    __m128i b2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(in + 8));
+    __m128i b3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(in + 12));
+
+    for (int i = 0; i < 32; ++i) {
+        __m128i rk_vec = _mm_set1_epi32(rk[i]);
+        b0 = sm4_round_aesni(b0, rk_vec);
+        b1 = sm4_round_aesni(b1, rk_vec);
+        b2 = sm4_round_aesni(b2, rk_vec);
+        b3 = sm4_round_aesni(b3, rk_vec);
+    }
+
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(out), b0);
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(out + 4), b1);
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(out + 8), b2);
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(out + 12), b3);
+}
 // 辅助函数：将字节数组转换为字（大端序）
 uint32_t bytes_to_word(const uint8_t bytes[4]) {
     return (static_cast<uint32_t>(bytes[0]) << 24) |
@@ -342,12 +360,26 @@ void performance_test() {
     }
     auto end_orig = std::chrono::high_resolution_clock::now();
 
-    // 优化算法性能测试
-    auto start_opt = std::chrono::high_resolution_clock::now();
+    // T-table优化算法性能测试
+    auto start_t_table = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < iterations; ++i) {
-        sm4_encrypt_optimized(plaintext, ciphertext, rk_optimized);
+        sm4_encrypt_t_table(plaintext, ciphertext, rk_original);
     }
-    auto end_opt = std::chrono::high_resolution_clock::now();
+    auto end_t_table = std::chrono::high_resolution_clock::now();
+
+#ifdef __AES__
+    uint32_t plaintext_4blocks_aesni[16];
+    uint32_t ciphertext_4blocks_aesni[16];
+    for (int i = 0; i < 4; ++i) {
+        memcpy(plaintext_4blocks_aesni + 4 * i, plaintext, 16);
+    }
+    auto rk = expand_key(key); 
+    auto start_aesni = std::chrono::high_resolution_clock::now();
+    for (int i = 0; i < iterations / 4; ++i) {
+        sm4_encrypt_4blocks_aesni(plaintext_4blocks_aesni, ciphertext_4blocks_aesni, rk);
+    }
+    auto end_aesni = std::chrono::high_resolution_clock::now();
+#endif
 
     // GFNI优化性能测试
 #ifdef __GFNI__
@@ -366,11 +398,16 @@ void performance_test() {
 
     // 输出结果
     auto orig_time = std::chrono::duration_cast<std::chrono::microseconds>(end_orig - start_orig);
-    auto opt_time = std::chrono::duration_cast<std::chrono::microseconds>(end_opt - start_opt);
-
     std::cout << "原始算法平均时间: " << orig_time.count() / (double)iterations << " μs/次\n";
-    std::cout << "优化算法平均时间: " << opt_time.count() / (double)iterations << " μs/次\n";
-    std::cout << "性能提升: " << (1 - (double)opt_time.count() / orig_time.count()) * 100 << "%\n";
+    // 输出T-table对比结果
+    auto t_table_time = std::chrono::duration_cast<std::chrono::microseconds>(end_t_table - start_t_table);
+    std::cout << "T-table优化平均时间: " << t_table_time.count() / (double)iterations << " μs/次\n";
+    std::cout << "T-table性能提升: " << (1 - (double)t_table_time.count() / orig_time.count()) * 100 << "%\n";
+#ifdef __AES__
+    auto aesni_time = std::chrono::duration_cast<std::chrono::microseconds>(end_aesni - start_aesni);
+    std::cout << "AES-NI算法平均时间: " << aesni_time.count() / (double)iterations << " μs/次\n";
+    std::cout << "AES-NI性能提升: " << (1 - (double)aesni_time.count() / orig_time.count()) * 100 << "%\n";
+#endif
 
 #ifdef __GFNI__
     auto gfni_time = std::chrono::duration_cast<std::chrono::microseconds>(end_gfni - start_gfni);

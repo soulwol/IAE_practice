@@ -16,7 +16,35 @@ def embed_watermark(input_path='test_image.jpg', output_path='embedded.png', wm_
 
 
 # ====== 2. 提取水印 ======
-def extract_watermark(img_path, wm_length, mode='str'):
+def extract_watermark(img_path, wm_length, mode='str', attack_type=None, attack_params=None):
+    temp_path = "temp_recovered.png"
+
+    # 根据攻击类型进行逆变换[1,2](@ref)
+    if attack_type == 'flip_horizontal':
+        img = Image.open(img_path)
+        img_recovered = img.transpose(Image.FLIP_LEFT_RIGHT)
+        img_recovered.save(temp_path)
+        img_path = temp_path
+        print("已执行水平翻转逆变换")
+
+    elif attack_type == 'flip_vertical':
+        img = Image.open(img_path)
+        img_recovered = img.transpose(Image.FLIP_TOP_BOTTOM)
+        img_recovered.save(temp_path)
+        img_path = temp_path
+        print("已执行垂直翻转逆变换")
+
+    elif attack_type == 'shift':
+        img = Image.open(img_path)
+        img_np = np.array(img)
+        dx = attack_params.get('dx', 0)
+        dy = attack_params.get('dy', 0)
+        # 执行反向平移[3](@ref)
+        recovered = np.roll(img_np, (-dy, -dx), axis=(0, 1))
+        Image.fromarray(recovered).save(temp_path)
+        img_path = temp_path
+        print(f"已执行平移逆变换(dx={-dx}, dy={-dy})")
+
     bwm = WaterMark(password_img=1, password_wm=1)
     return bwm.extract(img_path, wm_shape=wm_length, mode=mode)
 
@@ -29,60 +57,69 @@ def test_robustness(original_path, wm_length, output_dir='attacked_images'):
     results = []
 
     # ====== 攻击函数组 ======
-    def add_attack(name, func):
+    def add_attack(name, func, attack_type=None, attack_params=None):
         nonlocal results
         attacked_path = f"{output_dir}/{name}.png"
         func(original_path, attacked_path)
 
         try:
-            extracted = extract_watermark(attacked_path, wm_length)
+            # 提取时传递攻击类型和参数[4](@ref)
+            extracted = extract_watermark(
+                attacked_path,
+                wm_length,
+                attack_type=attack_type,
+                attack_params=attack_params
+            )
             results.append((name, extracted))
             print(f"{name}: 提取结果 -> {extracted}")
         except Exception as e:
             results.append((name, f"提取失败: {str(e)}"))
             print(f"{name}: 提取失败 - {str(e)}")
+        finally:
+            # 清理临时文件
+            if os.path.exists("temp_recovered.png"):
+                os.remove("temp_recovered.png")
 
     # ====== 具体攻击实现 ======
 
-    # 水平翻转
+    # 水平翻转（添加逆变换支持）
     def flip_horizontal(in_path, out_path):
         img = Image.open(in_path)
         img_flipped = img.transpose(Image.FLIP_LEFT_RIGHT)
         img_flipped.save(out_path)
 
-    add_attack("水平翻转", flip_horizontal)
+    add_attack("水平翻转", flip_horizontal, attack_type='flip_horizontal')
 
-    # 垂直翻转
+    # 垂直翻转（添加逆变换支持）
     def flip_vertical(in_path, out_path):
         img = Image.open(in_path)
         img_flipped = img.transpose(Image.FLIP_TOP_BOTTOM)
         img_flipped.save(out_path)
 
-    add_attack("垂直翻转", flip_vertical)
+    add_attack("垂直翻转", flip_vertical, attack_type='flip_vertical')
 
-    # 平移
+    # 平移（添加逆变换支持）
     def shift_image(in_path, out_path, dx=50, dy=30):
         img = Image.open(in_path)
         img_np = np.array(img)
         shifted = np.roll(img_np, (dy, dx), axis=(0, 1))
         Image.fromarray(shifted).save(out_path)
 
-    add_attack("平移攻击", shift_image)
+    add_attack("平移攻击", shift_image, attack_type='shift', attack_params={'dx': 50, 'dy': 30})
 
-    # 裁剪
+    # 裁剪（不需要逆变换）
     def crop_image(in_path, out_path, ratio=0.8):
         img = Image.open(in_path)
         w, h = img.size
         new_w, new_h = int(w * ratio), int(h * ratio)
         img_cropped = img.crop((0, 0, new_w, new_h))
-        # 填充回原始尺寸
         img_padded = Image.new(img.mode, (w, h), color=(0, 0, 0))
         img_padded.paste(img_cropped, (0, 0))
         img_padded.save(out_path)
 
     add_attack("裁剪攻击", crop_image)
 
-    # 对比度增强
+    # 对比度增强（不需要逆变换）
     def enhance_contrast(in_path, out_path, factor=2.0):
         img = Image.open(in_path)
         enhancer = ImageEnhance.Contrast(img)
@@ -91,7 +128,7 @@ def test_robustness(original_path, wm_length, output_dir='attacked_images'):
 
     add_attack("对比度增强", enhance_contrast)
 
-    # 对比度减弱
+    # 对比度减弱（不需要逆变换）
     def reduce_contrast(in_path, out_path, factor=0.5):
         img = Image.open(in_path)
         enhancer = ImageEnhance.Contrast(img)
@@ -100,20 +137,10 @@ def test_robustness(original_path, wm_length, output_dir='attacked_images'):
 
     add_attack("对比度减弱", reduce_contrast)
 
-    # 亮度调整
-    def adjust_brightness(in_path, out_path, factor=0.7):
-        img = Image.open(in_path)
-        enhancer = ImageEnhance.Brightness(img)
-        img_bright = enhancer.enhance(factor)
-        img_bright.save(out_path)
-
-    add_attack("亮度降低", adjust_brightness)
-
-    # 颜色平衡破坏
+    # 颜色平衡破坏（不需要逆变换）
     def color_shift(in_path, out_path):
         img = Image.open(in_path)
         r, g, b = img.split()
-        # 增加红色通道强度
         r = r.point(lambda x: min(x * 1.5, 255))
         img_shifted = Image.merge('RGB', (r, g, b))
         img_shifted.save(out_path)

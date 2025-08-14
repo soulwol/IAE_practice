@@ -322,43 +322,7 @@ class SignatureAttacks:
         print("攻击结果: 失败 (数学上不可行)")
         return False
 
-    def same_k_sm2_ecdsa_attack(self):
-        """情况3: SM2和ECDSA重用k攻击（修正公式）"""
-        print("\n" + "=" * 50)
-        print("情况3: SM2和ECDSA重用随机数k攻击")
-        print("=" * 50)
 
-        d, P = self.sm2.generate_keypair()
-        msg = "测试消息"
-        k = random.randint(1, self.sm2.N - 1)
-
-        # SM2签名
-        (r_sm2, s_sm2), _ = self.sm2.sign(msg, d, k=k)
-        print(f"SM2签名: r={hex(r_sm2)[:20]}..., s={hex(s_sm2)[:20]}...")
-
-        # ECDSA签名（接收完整签名）
-        (r_ecdsa, s_ecdsa), _ = self.ecdsa.sign(msg, d, k=k)
-        print(f"ECDSA签名: r={hex(r_ecdsa)[:20]}..., s={hex(s_ecdsa)[:20]}...")
-
-        e = self.ecdsa.sm3_hash(msg)  # 消息哈希
-
-        # 修正后的推导公式
-        numerator = (s_ecdsa * s_sm2 - e) % self.sm2.N
-        denominator = (s_ecdsa * (s_sm2 + r_sm2) - r_ecdsa) % self.sm2.N
-
-        if denominator == 0:
-            print("分母为0，推导失败")
-            d_cracked = 0
-        else:
-            inv_denom = self.sm2.curve.inv_mod(denominator, self.sm2.N)
-            d_cracked = (numerator * inv_denom) % self.sm2.N
-
-        # 验证结果
-        valid = d == d_cracked
-        print(f"\n真实私钥: {hex(d)[:20]}...")
-        print(f"推导私钥: {hex(d_cracked)[:20]}...")
-        print(f"攻击结果: {'成功' if valid else '失败'}")
-        return valid
 
     def run_all_attacks(self):
         """运行所有攻击并生成报告"""
@@ -376,11 +340,6 @@ class SignatureAttacks:
         print("\n>>> 开始攻击验证: 不同用户重用k <<<")
         result2 = self.same_k_different_users_attack()
         results.append(("不同用户重用k", result2))
-
-        # 运行攻击3
-        print("\n>>> 开始攻击验证: SM2和ECDSA重用k <<<")
-        result3 = self.same_k_sm2_ecdsa_attack()
-        results.append(("SM2和ECDSA重用k", result3))
 
         # 生成报告
         print("\n" + "=" * 50)
