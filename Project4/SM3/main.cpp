@@ -178,7 +178,6 @@ protected:
 };
 
 // 优化版本的SM3实现
-// 优化版本的SM3实现（修正版）
 class SM3_Optimized : public SM3_Base {
 protected:
     // 重写compress函数以应用优化
@@ -269,7 +268,7 @@ bool verify_hash(const uint8 digest[32], const std::string& expected) {
     return actual == expected;
 }
 
-// 测试函数模板
+// 测试函数
 template<typename SM3Type>
 void test_sm3(const std::string& name) {
     // 测试用例1: "abc" (标准测试向量)

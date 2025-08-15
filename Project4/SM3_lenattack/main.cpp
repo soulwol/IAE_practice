@@ -10,7 +10,7 @@ using uint8 = unsigned char;
 using uint32 = unsigned int;
 using uint64 = unsigned long long;
 
-// SM3基础实现（已添加状态和长度设置方法）
+// SM3基础实现
 class SM3_Base {
 public:
     SM3_Base() { reset(); }
@@ -29,7 +29,7 @@ public:
         buffer_length = 0;
     }
 
-    // 设置内部状态（用于长度扩展攻击）
+    // 设置内部状态
     void set_state(const uint32 new_state[8], uint64 new_total_len) {
         memcpy(state, new_state, 8 * sizeof(uint32));
         total_length = new_total_len;
